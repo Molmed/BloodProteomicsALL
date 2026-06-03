@@ -24,7 +24,7 @@ Affiliations:
 
 The circulating blood proteome provides a systemic readout of disease biology and holds promise for advancing diagnostics and disease monitoring in pediatric leukemia. Here, we profiled 3072 proteins in diagnostic serum from 54 children with acute lymphoblastic leukemia (ALL), 21 with acute myeloid leukemia (AML), and 12 healthy controls using the Olink Proximity Extension Assay. We observed profound alterations in circulating protein levels in leukemia patients compared with controls and identified immunophenotype-specific proteins, including SIGLEC15 in B-cell precursor ALL (BCP-ALL), NOTCH1 in T-ALL, and CEBPA in AML, all which remained high even in patients with low (<20%) or no peripheral blood blasts. Within BCP-ALL, molecular subtypes were reflected in the circulating proteome; for example, DSC2 and PTPRK were elevated in ETV6::RUNX1-positive cases, while IL-6R and ADAM8 were higher in High Hyperdiploid cases. Angiogenic growth factors decreased across all leukemia patients compared with controls, suggesting a fragile peripheral vasculature at diagnosis. Integration with external datasets revealed the likely cellular source of abundant proteins and examination of an external cohort validated our subtype-specific findings. Together, these results define shared and distinct proteomic signatures across pediatric acute leukemias and highlight candidate biomarkers for diagnostics and disease monitoring. 
 
-![image](/figures/abstract.png)
+![image](/abstract.png)
 Figure 1. The study overview.
 
 Details:
