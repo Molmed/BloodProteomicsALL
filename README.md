@@ -27,4 +27,7 @@ The circulating blood proteome provides a systemic readout of disease biology an
 ![image](/abstract.png)
 Figure 1. The study overview.
 
-Details:
+### Analysis & Data
+The /scripts directory contains the code used for data analysis and figure generation. The /data directory contains supplementary results, including limma output, protein features for the full human proteome and biomarker subset (secondary structure, PTM annotations, subcellular localization, extracellular vesicle association predictions, and other relevant global (protein-level) annotations & predictions).
+
+Note: Code is provided for transparency and reproducibility purposes. As the original Olink data cannot be shared publicly, most scripts cannot be executed as-is.
