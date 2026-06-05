@@ -1,0 +1,336 @@
+This notebook creates quadrant plots to compare protein abundance measurements across three analytical methods in pediatric B-cell precursor acute lymphoblastic leukemia (BCP-ALL), specifically comparing HeH (Hyperdiploid) vs ETV6::RUNX1 subtypes.
+
+```{r}
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+library(patchwork)
+library(ggtext) 
+
+# Data path
+data_path <- "../data"
+
+# Read data
+df <- read_excel(paste0(data_path, '/Enblad-et-al-SUPP-Tables-2026-01-14.xlsx'), 
+                 sheet = 'Table S15 HeH vs ER-overlap', skip = 2)
+
+# Column definitions based on actual data structure
+protein_col <- '...1'
+category_col <- '...4'
+olink_fc_col <- 'log2FC...7'
+olink_pval_col <- 'adjusted p-value...8'
+rna_fc_col <- 'log2FC...11'
+rna_pval_col <- 'adjusted p-value...12'
+massspec_fc_col <- 'log2FC...15'
+massspec_pval_col <- 'adjusted p-value...16'
+
+# Function to create quadrant plot with correlation
+create_quadrant_plot <- function(data, x_col, y_col, x_pval_col, y_pval_col, 
+                                title_suffix, x_label, y_label, p_threshold = 0.05,
+                                fixed_limits = NULL,
+                                shape_values = NULL) {
+  
+  # Prepare data
+  plot_data <- data %>%
+    select(all_of(c(protein_col, category_col, x_col, y_col, x_pval_col, y_pval_col))) %>%
+    filter(complete.cases(.)) %>%
+    mutate(
+      significant = (.data[[x_pval_col]] < p_threshold) & (.data[[y_pval_col]] < p_threshold),
+      
+      quadrant = case_when(
+        .data[[x_col]] > 0 & .data[[y_col]] > 0 ~ "Concordant Upregulated",
+        .data[[x_col]] < 0 & .data[[y_col]] > 0 ~ "Discordant (X↓, Y↑)", 
+        .data[[x_col]] < 0 & .data[[y_col]] < 0 ~ "Concordant Downregulated",
+        .data[[x_col]] > 0 & .data[[y_col]] < 0 ~ "Discordant (X↑, Y↓)"
+      ),
+      
+      sig_category = case_when(
+        significant & quadrant == "Concordant Upregulated" ~ "Significant Concordant ↑HeH",
+        significant & grepl("Discordant", quadrant) ~ "Significant Discordant",
+        significant & quadrant == "Concordant Downregulated" ~ "Significant Concordant ↑ETV6::RUNX1",
+        !significant ~ "Non-significant (RNA or MS)"
+      )
+    )
+  
+  # Calculate correlation
+  cor_test <- cor.test(plot_data[[x_col]], plot_data[[y_col]], method = "pearson")
+  cor_r <- round(cor_test$estimate, 3)
+  cor_p <- cor_test$p.value
+  
+  # Format p-value
+  if (cor_p < 0.001) {
+    cor_p_text <- "p < 0.001"
+  } else {
+    cor_p_text <- paste("p =", round(cor_p, 3))
+  }
+  
+  # Create correlation text
+  cor_text <- paste0("r = ", cor_r, "\n", cor_p_text, "\nn = ", nrow(plot_data))
+  
+  # Colors
+  colors <- c(
+    "Significant Concordant ↑HeH" = "#d73027",
+    "Significant Discordant" = "#fc8d59",
+    "Significant Concordant ↑ETV6::RUNX1" = "#4575b4",
+    "Non-significant (RNA or MS)" = "#bababa"
+  )
+  
+  # Shapes based on category column (...4)
+  # IMPORTANT: Use a *single* global mapping so categories keep the same shape
+  # across plots (otherwise ggplot assigns different shapes depending on which
+  # categories are present after filtering).
+  if (is.null(shape_values)) {
+    categories <- unique(plot_data[[category_col]])
+    categories <- categories[!is.na(categories)]
+    categories <- sort(as.character(categories))
+    n_categories <- length(categories)
+    shapes <- c(16, 17, 15, 18, 8, 3, 4, 7, 9, 10)[1:n_categories]
+    names(shapes) <- categories
+  } else {
+    shapes <- shape_values
+  }
+  
+  # Determine axis limits
+  if (!is.null(fixed_limits)) {
+    x_lim <- fixed_limits$x
+    y_lim <- fixed_limits$y
+  } else {
+    x_range <- range(plot_data[[x_col]], na.rm = TRUE)
+    y_range <- range(plot_data[[y_col]], na.rm = TRUE)
+    
+    max_range <- max(abs(c(x_range, y_range)))
+    x_lim <- c(-max_range, max_range)
+    y_lim <- c(-max_range, max_range)
+  }
+  
+  # Position correlation text in upper left corner
+  cor_x <- x_lim[1] + 0.05 * diff(x_lim)
+  cor_y <- y_lim[2] - 0.2 * diff(y_lim)
+  
+  # Create plot
+  p <- ggplot(plot_data, aes(x = .data[[x_col]], y = .data[[y_col]])) +
+    
+    # Quadrant backgrounds
+    annotate("rect", xmin = 0, xmax = Inf, ymin = 0, ymax = Inf, 
+             fill = "#ffe6e6", alpha = 0.2) +
+    annotate("rect", xmin = -Inf, xmax = 0, ymin = 0, ymax = Inf, 
+             fill = "#fff2e6", alpha = 0.2) +
+    annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = 0, 
+             fill = "#e6f3ff", alpha = 0.2) +
+    annotate("rect", xmin = 0, xmax = Inf, ymin = -Inf, ymax = 0, 
+             fill = "#f0e6ff", alpha = 0.2) +
+    
+    # Add correlation line (trend line)
+    geom_smooth(method = "lm", se = TRUE, color = "black", linetype = "dashed", 
+                alpha = 0.3, linewidth = 0.8) +
+    
+    # Points
+    geom_point(aes(color = sig_category, shape = .data[[category_col]]), 
+               size = ifelse(plot_data$significant, 3, 2),
+               alpha = ifelse(plot_data$significant, 0.8, 0.4)) +
+    
+    # Reference lines
+    geom_hline(yintercept = 0, color = "black", linewidth = 0.8, alpha = 0.7) +
+    geom_vline(xintercept = 0, color = "black", linewidth = 0.8, alpha = 0.7) +
+    
+    # Correlation text
+    annotate("text", x = cor_x, y = cor_y, label = cor_text, 
+             hjust = 0, vjust = 1, size = 4, 
+             fontface = "bold", color = "black") +
+    
+    # Labels for ALL points
+    geom_text_repel(
+      aes(label = .data[[protein_col]]),
+      size = 2.5,
+      max.overlaps = 30,
+      box.padding = 0.2,
+      point.padding = 0.2,
+      segment.color = "gray50",
+      segment.alpha = 0.4,
+      min.segment.length = 0.05,
+      force = 2
+    ) +
+    
+    # Styling
+    scale_color_manual(
+      values = colors, 
+      name = "Significance",
+      labels = c(
+        "Significant Concordant ↑HeH" = "Significant Concordant ↑HeH",
+        "Significant Discordant" = "Significant Discordant",
+        "Significant Concordant ↑ETV6::RUNX1" = expression("Significant Concordant ↑"*italic("ETV6::RUNX1")),
+        "Non-significant (RNA or MS)" = "Non-significant (RNA or MS)"
+      )
+    ) +
+    scale_shape_manual(
+      values = shapes,
+      breaks = names(shapes),
+      name = "Category",
+      drop = FALSE
+    ) +
+    
+    # Fixed axis limits
+    coord_fixed(xlim = x_lim, ylim = y_lim) +
+    
+    # Quadrant labels with italic ETV6::RUNX1
+    annotate("text", x = x_lim[2] * 0.95, y = y_lim[2] * 0.95, 
+             label = "Concordant\n(↑HeH)", 
+             hjust = 1, vjust = 1, size = 3.5, color = "gray20", fontface = "bold") +
+    annotate("text", x = x_lim[1] * 0.95, y = y_lim[2] * 0.95, 
+             label = "Discordant\n(X↓, Y↑)", 
+             hjust = 0, vjust = 1, size = 3.5, color = "gray20", fontface = "bold") +
+    annotate("richtext", x = x_lim[1] * 0.95, y = y_lim[1] * 0.95, 
+             label = "**Concordant**<br>(**↑***ETV6::RUNX1*)", 
+             hjust = 0, vjust = 0, size = 3.5, color = "gray20", fontface = "bold",
+             fill = NA, label.color = NA) +
+    annotate("text", x = x_lim[2] * 0.95, y = y_lim[1] * 0.95, 
+             label = "Discordant\n(X↑, Y↓)", 
+             hjust = 1, vjust = 0, size = 3.5, color = "gray20", fontface = "bold") +
+    
+    # Labels
+    labs(
+      x = x_label,
+      y = y_label,
+      title = paste("")
+    ) +
+    
+    # Theme
+    theme_minimal(base_size = 11) +
+    theme(
+      plot.title = element_text(size = 13, hjust = 0.5, face = "bold"),
+      plot.caption = element_text(size = 9, color = "gray50"),
+      axis.title = element_text(size = 11, face = "bold"),
+      axis.text = element_text(size = 10),
+      legend.title = element_text(size = 10, face = "bold"),
+      legend.text = element_text(size = 9),
+      legend.position = "right",
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(color = "gray90", linewidth = 0.5),
+      panel.border = element_rect(color = "gray30", fill = NA, linewidth = 0.8),
+      plot.margin = margin(10, 10, 10, 10),
+      aspect.ratio = 1
+    )
+  
+  # Print correlation statistics to console
+  cat("\n", title_suffix, "Correlation Statistics:\n")
+  cat("Pearson's r =", cor_r, "\n")
+  cat("P-value =", cor_p, "\n")
+  cat("Sample size =", nrow(plot_data), "\n")
+  cat("95% CI: [", round(cor_test$conf.int[1], 3), ", ", round(cor_test$conf.int[2], 3), "]\n\n")
+  
+  return(p)
+}
+
+# Calculate global limits
+all_categories <- df[[category_col]]
+all_categories <- all_categories[!is.na(all_categories)]
+all_categories <- sort(unique(as.character(all_categories)))
+
+# Fixed shape mapping (consistent across all plots)
+shape_pool <- c(16, 17, 15, 18, 8, 3, 4, 7, 9, 10, 11, 12, 13, 14)
+global_shapes <- shape_pool[seq_along(all_categories)]
+names(global_shapes) <- all_categories
+
+all_values <- c(
+  df[[rna_fc_col]], df[[olink_fc_col]], 
+  df[[massspec_fc_col]], df[[olink_fc_col]]
+)
+all_values <- all_values[!is.na(all_values)]
+max_abs_value <- max(abs(all_values))
+global_limits <- list(
+  x = c(-max_abs_value, max_abs_value),
+  y = c(-max_abs_value, max_abs_value)
+)
+
+# Create plots
+plot1 <- create_quadrant_plot(
+  data = df,
+  x_col = rna_fc_col,
+  y_col = olink_fc_col,
+  x_pval_col = rna_pval_col,
+  y_pval_col = olink_pval_col,
+  title_suffix = "Olink vs RNA",
+  x_label = "mRNA Expression Log2FC",
+  y_label = "Protein Abundance Log2FC (Olink)",
+  fixed_limits = global_limits,
+  shape_values = global_shapes
+)
+
+plot2 <- create_quadrant_plot(
+  data = df,
+  x_col = massspec_fc_col,
+  y_col = olink_fc_col,
+  x_pval_col = massspec_pval_col,
+  y_pval_col = olink_pval_col,
+  title_suffix = "Olink vs Mass-spec",
+  x_label = "Mass-spec Log2FC",
+  y_label = "Protein Abundance Log2FC (Olink)",
+  fixed_limits = global_limits,
+  shape_values = global_shapes
+)
+
+# Save individual plots
+#ggsave("../figures/quadrant_plot_olink_vs_rna.png", plot1, 
+#       width = 8, height = 8, dpi = 300, bg = "white")
+#ggsave("../figures/quadrant_plot_olink_vs_massspec.png", plot2, 
+#       width = 8, height = 8, dpi = 300, bg = "white")
+
+# Combine plots
+combined_plot <- plot1 + plot2 + 
+  plot_layout(ncol = 2, guides = "collect") +
+  plot_annotation(
+    title = expression(bold("Comparison of Protein Expression Methods in HeH vs "*italic("ETV6::RUNX1")*" BCP-ALL")),
+    theme = theme(plot.title = element_text(size = 16, hjust = 0.5))
+  )
+
+print(combined_plot)
+
+# Natural scale plots
+plot1_natural <- create_quadrant_plot(
+  data = df,
+  x_col = rna_fc_col,
+  y_col = olink_fc_col,
+  x_pval_col = rna_pval_col,
+  y_pval_col = olink_pval_col,
+  title_suffix = "Olink vs RNA",
+  x_label = "mRNA Expression Log2FC",
+  y_label = "Protein Abundance Log2FC (Olink)",
+  fixed_limits = NULL,
+  shape_values = global_shapes
+)
+
+plot2_natural <- create_quadrant_plot(
+  data = df,
+  x_col = massspec_fc_col,
+  y_col = olink_fc_col,
+  x_pval_col = massspec_pval_col,
+  y_pval_col = olink_pval_col,
+  title_suffix = "Olink vs Mass-spec",
+  x_label = "Mass-spec Log2FC",
+  y_label = "Protein Abundance Log2FC (Olink)",
+  fixed_limits = NULL,
+  shape_values = global_shapes
+)
+
+print(plot1_natural)
+print(plot2_natural)
+
+#ggsave("../figures/quadrant_plot_olink_vs_rna_natural.png", plot1_natural, 
+#       width = 8, height = 8, dpi = 300, bg = "white")
+#ggsave("../figures/quadrant_plot_olink_vs_massspec_natural.png", plot2_natural, 
+#       width = 8, height = 8, dpi = 300, bg = "white")
+
+combined_plot_natural <- plot1_natural + plot2_natural + 
+  plot_layout(ncol = 2, guides = "collect") +
+  plot_annotation(
+    title = expression(bold("Comparison of Protein Expression Methods in HeH vs "*italic("ETV6::RUNX1")*" BCP-ALL")),
+    theme = theme(plot.title = element_text(size = 16, hjust = 0.5))
+  )
+
+ggsave("../figures/quadrant_plots_combined_natural.png", combined_plot_natural, 
+       width = 14, height = 7, dpi = 300, bg = "white")
+#ggsave("../figures/quadrant_plots_combined_natural.pdf", combined_plot_natural, 
+#       width = 14, height = 7, dpi = 300, bg = "white")
+```
+

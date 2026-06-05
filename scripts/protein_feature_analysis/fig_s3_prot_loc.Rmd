@@ -1,0 +1,90 @@
+---
+title: "Localisation of Biomarkers"
+---
+
+Here we are investigating the subcellular localization patterns of biomarkers across different types of leukemia, with a focus on how protein expression levels affect these patterns.
+
+Tool used for protein localisation annotations:
+José Juan Almagro Armenteros, Casper Kaae Sønderby, Søren Kaae Sønderby, Henrik Nielsen, Ole Winther, DeepLoc: prediction of protein subcellular localization using deep learning, Bioinformatics, Volume 33, Issue 21, November 012017, Pages 3387–3395, https://doi.org/10.1093/bioinformatics/btx431
+
+Aim: 
+Classification by expression level 
+1. We are categorizing biomarkers as "Increased" or "Decreased" based on their Log2 fold change values (≥1.5 threshold)
+2. For subcellular localization mapping, we are analyzing where these biomarkers are located within cells across 10 different cellular compartments (cytoplasm, nucleus, cell membrane, mitochondria, etc.)
+3. Creating stacked bar charts that show the proportion of biomarkers found in each cellular compartment, stratified by both leukemia type and expression level.
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(ggsignif)
+library(tidyverse)
+
+df <-read.csv('../data/curated/annotated_biomarkers.csv')
+
+# Print initial data size
+print(paste("Initial data size:", nrow(df)))
+
+# Filter based on adjusted p-values and Log2FC threshold
+df <- df %>%
+  filter(adj.P.Val < 0.05 & abs(Log2FC) >= 1.5) %>%
+  # Add NPX-based classification
+  mutate(NPX_Level = ifelse(Log2FC >= 1.5, "Increased", "Decreased"))
+
+# Print filtered data size
+print(paste("After filtering (adj.P.Val < 0.05 & abs(Log2FC) >= 1.5):", nrow(df)))
+
+# Print counts by leukemia type and expression level
+count_summary <- df %>%
+  group_by(leukemia_type, NPX_Level) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  pivot_wider(names_from = NPX_Level, values_from = count, values_fill = 0) %>%
+  mutate(Total = Increased + Decreased)
+
+print("Counts by leukemia type and expression level:")
+print(count_summary)
+
+# Create localization analysis with both leukemia groups and NPX levels
+localisation_analysis <- df %>%
+  select(leukemia_type, NPX_Level, Cytoplasm, Extracellular, Lysosome.Vacuole, Nucleus, 
+         Cell_membrane, Endoplasmic_reticulum, Mitochondrion, Golgi_apparatus, 
+         Peroxisome, Plastid) %>%
+  pivot_longer(., cols = c(Cytoplasm, Extracellular, Lysosome.Vacuole, Nucleus, 
+                          Cell_membrane, Endoplasmic_reticulum, Mitochondrion, 
+                          Golgi_apparatus, Peroxisome, Plastid), 
+               names_to = "Localisation", values_to = "Fraction") %>%
+  # Clean up localization names for better legend readability
+  mutate(Localisation = case_when(
+    Localisation == "Cell_membrane" ~ "Cell membrane",
+    Localisation == "Endoplasmic_reticulum" ~ "Endoplasmic reticulum", 
+    Localisation == "Lysosome.Vacuole" ~ "Lysosome/Vacuole",
+    Localisation == "Golgi_apparatus" ~ "Golgi apparatus",
+    TRUE ~ Localisation  # Keep other names as they are
+  )) %>%
+  # Reorder leukemia types as requested: BCP-ALL, AML, T-ALL, Leukemia
+  mutate(leukemia_type = factor(leukemia_type, 
+                               levels = c("BCP-ALL", "AML", "T-ALL", "leukemia"),
+                               labels = c("BCP-ALL", "AML", "T-ALL", "Leukemia")))
+
+# Localization plots split by NPX levels, with leukemia types on x-axis
+localisation_plot_npx_leukemia <- ggplot(localisation_analysis, 
+                                        aes(fill=Localisation, y=Fraction, x=leukemia_type)) + 
+    geom_bar(position="fill", stat="identity") + 
+    facet_wrap(~NPX_Level, ncol = 2) +
+    ylab("Cellular localisation fraction") + 
+    xlab("") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          strip.text = element_text(size = 12, face = "bold"),
+          axis.text.x = element_text(angle =30, hjust = 1))
+
+localisation_plot_npx_leukemia
+ggsave(localisation_plot_npx_leukemia, width = 10, height = 6, dpi = 300, 
+       filename = "../figures/protein_localisation_npx_leukemia.png")
+ggsave(localisation_plot_npx_leukemia, width = 10, height = 6, dpi = 300, 
+       filename = "../figures/protein_localisation_npx_leukemia.pdf")
+```
+
+
+
+

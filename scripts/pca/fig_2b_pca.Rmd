@@ -1,0 +1,242 @@
+```{r}
+library(dplyr)
+library(readr)
+library(readxl)
+library(ggplot2)
+library(OlinkAnalyze)
+
+olink_path <- "../data/raw/olink.csv"
+pheno_path <- "../data/raw/MASTER_PHENO_FILE_AML_ALL_controls_20260122.xlsx"
+removed_patients <- c("AML_101", "AML_139", "ALL_920", "K-023")
+```
+
+```{r}
+# Read Olink + QC filter 
+olink_pass <- read_delim(olink_path, delim = ";", show_col_types = FALSE) %>%
+  filter(QC_Warning == "PASS", Assay_Warning == "PASS") %>%
+  select(SampleID, Assay, OlinkID, UniProt, NPX)
+```
+
+
+```{r}
+# Read + clean pheno
+pheno_f <- read_excel(pheno_path) %>%
+  mutate(
+    immunopheno = ifelse(is.na(immunopheno) | immunopheno %in% c("nan","NaN"), "CTRL", immunopheno),
+    immunopheno = recode(immunopheno, `B-ALL` = "BCP-ALL", `CTRL` = "Controls")
+  ) %>%
+  select(sample_id, public_id, immunopheno, Subtype) %>%
+  filter(!public_id %in% removed_patients) %>%
+  rename(SampleID = sample_id)
+```
+
+
+```{r}
+# Filter samples
+olink_use <- olink_pass %>%
+  inner_join(pheno_f, by = "SampleID")
+  
+# Let OlinkAnalyze handle panel merging when byPanel = FALSE
+olink_for_pca <- olink_use %>%
+  select(SampleID, NPX, OlinkID, Assay, UniProt, public_id, immunopheno, Subtype)
+
+g <- OlinkAnalyze::olink_pca_plot(
+  df      = olink_for_pca,
+  color_g = "immunopheno",
+  byPanel = FALSE
+)
+```
+
+```{r}
+category_order <- c('Controls', 'AML', 'T-ALL', 'BCP-ALL')
+
+colors <- c(
+  'BCP-ALL' = '#447597',
+  'AML'     = '#EFB2D1',
+  'Controls'= '#A6A6A6',
+  'T-ALL'   = '#87CCB2'
+)
+```
+
+
+```{r}
+p <- g[[1]]
+scores <- p$data
+
+# join Subtype onto the PCA score table
+scores <- scores %>%
+  left_join(pheno_f %>% select(SampleID, Subtype), by = "SampleID") %>%
+  mutate(
+    Subtype = factor(Subtype),
+    shape_grp = ifelse(colors == "BCP-ALL", as.character(Subtype), "Other"),
+    shape_grp = factor(shape_grp)
+  )
+```
+
+
+```{r}
+names(scores)
+category_order <- c('Controls', 'AML', 'T-ALL', 'BCP-ALL')
+scores$colors <- factor(scores$colors, levels = category_order)
+
+pca1 <- ggplot(scores, aes(PCX, PCY, color = colors, shape = shape_grp)) +
+  geom_point(size = 2.5, alpha = 0.9) +
+  scale_color_manual(values = colors, breaks = category_order, drop = FALSE) +
+  scale_shape_manual(
+    breaks = c("HeH", "t1221"),  
+    values = c(
+      "Other" = 16,
+      "HeH"   = 16,
+      "t1221" = 17
+    ),
+    labels = c(
+      "HeH"   = "HeH",
+      "t1221" = expression(italic("ETV6::RUNX1"))
+    )
+  ) +
+  labs(
+    x = p$labels$x,
+    y = p$labels$y,
+    color = "immunopheno",
+    shape = "BCP-ALL subtype"
+  ) +
+  theme_classic()
+
+pca1 <- pca1 + theme(legend.title = element_blank())
+
+
+pca1
+
+ggsave("updated_figures/pca1.pdf", pca1,
+       width = 5, height = 4, dpi = 300, bg = "white")
+```
+
+```{r}
+## PCA plot for the 40 selected proteins (with BCP-ALL subtype shapes) ---
+# Read list of proteins (drop empty lines)
+selected_40 <- readLines("40_selected_proteins.txt")
+selected_40 <- selected_40[nzchar(selected_40)]
+
+# Subset to the 40 proteins
+olink_for_pca_40 <- olink_for_pca %>%
+  filter(Assay %in% selected_40)   # or: filter(OlinkID %in% selected_40)
+
+# Run PCA plot via OlinkAnalyze
+g_40 <- OlinkAnalyze::olink_pca_plot(
+  df      = olink_for_pca_40,
+  color_g = "immunopheno",
+  byPanel = FALSE
+)
+
+# Extract ggplot + data
+p40 <- g_40[[1]]
+d40 <- p40$data
+
+# Join subtype info + create shape group (BCP-ALL subtypes get shapes; others are "Other")
+d40 <- d40 %>%
+  left_join(pheno_f %>% select(SampleID, Subtype), by = "SampleID") %>%
+  mutate(
+    shape_grp = ifelse(colors == "BCP-ALL", as.character(Subtype), "Other"),
+    shape_grp = factor(shape_grp),
+    colors    = factor(colors, levels = category_order)   # enforce legend order
+  )
+
+# Put modified data back into the plot
+p40$data <- d40
+
+# Final PCA2 with same palette/order + subtype shapes
+pca2 <- p40 +
+  aes(shape = shape_grp) +
+  scale_color_manual(values = colors, breaks = category_order, drop = FALSE) +
+  scale_shape_manual(
+    breaks = c("HeH", "t1221"),
+    values = c(
+      "Other" = 16,
+      "HeH"   = 16,
+      "t1221" = 17
+    ),
+    labels = c(
+      "HeH"   = "HeH",
+      "t1221" = expression(italic("ETV6::RUNX1"))
+    )
+  ) +
+  labs(
+    color = "immunopheno",
+    shape = "BCP-ALL subtype"
+  ) +
+  theme_classic()
+
+pca2 <- pca2 + theme(legend.title = element_blank())
+
+pca2
+
+ggsave("updated_figures/pca2.pdf", pca2,
+       width = 5, height = 4, dpi = 300, bg = "white")
+```
+
+
+```{r}
+## PCA plot for the 50 selected proteins (with BCP-ALL subtype shapes) 
+# Read list of proteins (drop empty lines)
+selected_50 <- readLines("50_selected_proteins.txt")
+selected_50 <- selected_50[nzchar(selected_50)]
+
+# Subset to the 40 proteins
+olink_for_pca_50 <- olink_for_pca %>%
+  filter(Assay %in% selected_50)   
+
+# Run PCA plot via OlinkAnalyze
+g_50 <- OlinkAnalyze::olink_pca_plot(
+  df      = olink_for_pca_50,
+  color_g = "immunopheno",
+  byPanel = FALSE
+)
+
+# Extract ggplot + data
+p50 <- g_50[[1]]
+d50 <- p50$data
+
+# Join subtype info + create shape group
+d50 <- d50 %>%
+  left_join(pheno_f %>% select(SampleID, Subtype), by = "SampleID") %>%
+  mutate(
+    shape_grp = ifelse(colors == "BCP-ALL", as.character(Subtype), "Other"),
+    shape_grp = factor(shape_grp),
+    colors    = factor(colors, levels = category_order)   # enforce legend order
+  )
+
+# Put modified data back into the plot
+p50$data <- d50
+
+# Final PCA2 with same palette/order + subtype shapes
+pca3 <- p50 +
+  aes(shape = shape_grp) +
+  scale_color_manual(values = colors, breaks = category_order, drop = FALSE) +
+  scale_shape_manual(
+    breaks = c("HeH", "t1221"), 
+    values = c(
+      "Other" = 16,
+      "HeH"   = 16,
+      "t1221" = 17
+    ),
+    labels = c(
+      "HeH"   = "HeH",
+      "t1221" = expression(italic("ETV6::RUNX1"))
+    )
+  ) +
+  labs(
+    color = "immunopheno",
+    shape = "BCP-ALL subtype"
+  ) +
+  theme_classic()
+
+pca3 <- pca3 + theme(legend.title = element_blank())
+
+pca3
+
+ggsave("updated_figures/pca3.pdf", pca3,
+       width = 5, height = 4, dpi = 300, bg = "white")
+```
+
+
+

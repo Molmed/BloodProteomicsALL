@@ -1,0 +1,162 @@
+```{r}
+library(dplyr)
+library(readr)
+library(readxl)
+library(ggplot2)
+library(OlinkAnalyze)
+
+olink_path <- "../data/raw/olink.csv"
+pheno_path <- "../data/raw/MASTER_PHENO_FILE_AML_ALL_controls_20260122.xlsx"
+removed_patients <- c("AML_101", "AML_139", "ALL_920", "K-023")
+```
+
+```{r}
+# Read Olink + QC filter
+olink_pass <- read_delim(olink_path, delim = ";", show_col_types = FALSE) %>%
+  filter(QC_Warning == "PASS", Assay_Warning == "PASS") %>%
+  select(SampleID, Assay, OlinkID, UniProt, NPX)
+```
+
+
+```{r}
+# Read + clean pheno
+pheno_f <- read_excel(pheno_path) %>%
+  mutate(
+    immunopheno = ifelse(is.na(immunopheno) | immunopheno %in% c("nan","NaN"), "CTRL", immunopheno),
+    immunopheno = recode(immunopheno, `B-ALL` = "BCP-ALL", `CTRL` = "Controls")
+  ) %>%
+  select(sample_id, public_id, immunopheno, Subtype, sex, age, AgeGrp, Dx_year) %>%
+  filter(!public_id %in% removed_patients) %>%
+  rename(SampleID = sample_id)
+
+
+# Age grouping column does not contain Control age groups, so we have to add that
+pheno_f <- pheno_f %>%
+  mutate(
+    AgeGrp = case_when(
+      !is.na(AgeGrp) ~ as.character(AgeGrp),   # keep existing labels
+      age < 5        ~ "<5",
+      age >= 5 & age <= 9  ~ "5-9",
+      age >= 10 & age <= 14 ~ "10-14",
+      age >= 15      ~ ">=15",
+      TRUE ~ NA_character_
+    )
+  )
+
+# calculate sample age
+pheno_f <- pheno_f %>%
+  mutate(
+    Dx_year = as.numeric(Dx_year),
+    sample_age = 2023 - Dx_year
+  )
+```
+
+
+
+```{r}
+ggplot(pheno_f, aes(x = sample_age)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "#6F1473") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Sample Age (2026 - Dx_year)",
+    x = "Sample Age",
+    y = "Count"
+  )
+```
+
+
+```{r}
+# Filter samples
+olink_use <- olink_pass %>%
+  inner_join(pheno_f, by = "SampleID")
+  
+# Let OlinkAnalyze handle panel merging when byPanel = FALSE
+olink_for_pca <- olink_use %>%
+  select(SampleID, NPX, OlinkID, Assay, UniProt, public_id, sex, AgeGrp, age, immunopheno, Subtype, sample_age)
+
+g <- OlinkAnalyze::olink_pca_plot(
+  df      = olink_for_pca,
+  color_g = "AgeGrp",
+  byPanel = FALSE
+)
+```
+
+```{r}
+cols_sex <- c(female = "#7DC0A6", male = "#ED936B")
+cols_age <- c("<5"="#F0B7BA", "5-9"="#E671A0", "10-14"="#B53087", ">=15"="#6F1473")
+```
+
+
+```{r}
+g_age <- OlinkAnalyze::olink_pca_plot(df = olink_for_pca, color_g = "AgeGrp", byPanel = FALSE)
+
+p_age <- g_age[[1]] +
+  scale_color_manual(
+    values = cols_age,
+    breaks = names(cols_age),
+    limits = names(cols_age),
+    drop = FALSE,
+    na.value = "grey70"    
+  ) +
+  theme(legend.title = element_blank())
+
+ggsave("updated_figures/pca_age.pdf", p_age,
+       width = 5, height = 4, dpi = 300, bg = "white")
+
+p_age
+```
+```{r}
+g_sex <- OlinkAnalyze::olink_pca_plot(df = olink_for_pca, color_g = "sex", byPanel = FALSE)
+
+p_sex <- g_sex[[1]] +
+  scale_color_manual(
+    values = cols_sex,
+    breaks = names(cols_sex),
+    limits = names(cols_sex),
+    drop = FALSE,
+    na.value = "grey70"
+  ) +
+  theme(legend.title = element_blank())
+
+p_sex
+
+ggsave("updated_figures/pca_sex.pdf", p_sex,
+       width = 5, height = 4, dpi = 300, bg = "white")
+
+```
+
+
+```{r}
+# Run PCA 
+pca0 <- OlinkAnalyze::olink_pca_plot(
+  df      = olink_for_pca,
+  color_g = "sex",
+  byPanel = FALSE,
+  quiet   = TRUE
+)
+
+# Extract PCA coordinates and add sample_age
+scores_age <- pca0[[1]]$data %>%
+  left_join(
+    olink_for_pca %>% distinct(SampleID, sample_age),
+    by = "SampleID"
+  )
+
+# Final plot: continuous gradient
+p_sample_age <- ggplot(scores_age, aes(PCX, PCY, color = sample_age)) +
+  geom_point(size = 2.5) +
+  xlab(pca0[[1]]$labels$x) +
+  ylab(pca0[[1]]$labels$y) +
+  OlinkAnalyze::set_plot_theme() +
+  scale_color_viridis_c(option = "cividis", na.value = "grey70") +
+  labs(color = "Age (years)")
+
+# View
+p_sample_age
+
+# Save
+ggsave("updated_figures/pca_sample_age.pdf",
+       p_sample_age,
+       width = 5, height = 4, dpi = 300, bg = "white")
+```
+
